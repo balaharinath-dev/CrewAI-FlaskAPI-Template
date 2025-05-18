@@ -6,8 +6,6 @@ from crewai.tools import BaseTool
 from langchain_google_genai import GoogleGenerativeAI
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-import datetime
-import traceback
 
 # Load environment variables
 load_dotenv()
@@ -15,132 +13,137 @@ load_dotenv()
 # Initialize Flask app
 app = Flask(__name__)
 
-# ----- Tool Implementation -----
-class AnalysisToolInput(BaseModel):
-    query: str = Field(description="Input query for analysis")
-    depth: str = Field(description="Analysis depth level", default="standard")
+# --------------------------
+# 1. TOOL IMPLEMENTATION (EXACTLY AS PROVIDED)
+# --------------------------
+class MyToolInput(BaseModel):
+    query: str = Field(description="Description of the query parameter")
+    param2: str = Field(description="Description of second parameter")
 
-class ContentAnalysisTool(BaseTool):
-    name: str = "content_analyzer"
-    description: str = "Analyzes content and extracts insights"
-    args_schema: Type[BaseModel] = AnalysisToolInput
+class MyCustomTool(BaseTool):
+    name: str = "my_custom_tool"
+    description: str = "Description of what this tool does"
+    args_schema: Type[BaseModel] = MyToolInput
 
-    def _run(self, query: str, depth: str = "standard") -> Dict[str, Any]:
+    def _run(self, query: str, param2: str) -> Dict[str, Any]:
+        """Implementation of the tool's functionality"""
         try:
-            # Your analysis logic here
-            return {
-                "analysis": f"Deep analysis of '{query}'",
-                "insights": ["insight1", "insight2"],
-                "depth_level": depth
-            }
+            # Your tool logic here
+            return {"result": f"Processed {query} with {param2}"}
         except Exception as e:
             return {"error": str(e)}
 
-# ----- CrewAI Implementation -----
-class ContentAnalysisCrew:
+# --------------------------
+# 2. CREWAI IMPLEMENTATION (EXACTLY AS PROVIDED)
+# --------------------------
+class MyCrew:
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         
+        # Initialize LLM
         self.llm = GoogleGenerativeAI(
             model="gemini/gemini-1.5-flash",
-            google_api_key=self.api_key,
+            google_api_key=self.gemini_api_key,
             temperature=0.5,
         )
         
-        self.analysis_tool = ContentAnalysisTool()
+        # Initialize tools
+        self.custom_tool = MyCustomTool()
+        
+        # Setup agents and crew
         self._setup_agents()
         self._setup_crew()
     
     def _setup_agents(self):
-        """Initialize specialized agents"""
-        self.research_agent = Agent(
-            role="Research Analyst",
-            goal="Gather and analyze content data",
-            backstory="Expert in content research with 10 years experience",
+        """Initialize all agents with their roles and tools"""
+        self.primary_agent = Agent(
+            role="Primary Agent Role",
+            goal="What this agent aims to accomplish",
+            backstory="Background of this agent",
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-            tools=[self.analysis_tool]
+            tools=[self.custom_tool]
         )
         
-        self.strategy_agent = Agent(
-            role="Strategy Consultant",
-            goal="Develop actionable recommendations",
-            backstory="Former marketing director turned AI strategist",
+        self.secondary_agent = Agent(
+            role="Secondary Agent Role",
+            goal="What this agent aims to accomplish",
+            backstory="Background of this agent",
             verbose=True,
-            allow_delegation=False,
+            allow_delegation=True,
             llm=self.llm
         )
     
     def _setup_crew(self):
-        """Configure the crew workflow"""
+        """Configure the crew with agents and process"""
         self.crew = Crew(
-            agents=[self.research_agent, self.strategy_agent],
+            agents=[self.primary_agent, self.secondary_agent],
             tasks=[],
             verbose=True,
             process=Process.sequential
         )
     
     def _create_tasks(self, user_input: str) -> List[Task]:
-        """Generate tasks based on user input"""
-        research_task = Task(
-            description=f"Analyze this content: {user_input}",
-            expected_output="Comprehensive content analysis report",
-            agent=self.research_agent,
-            tools=[self.analysis_tool]
+        """Create tasks based on user input"""
+        task1 = Task(
+            description=f"First task description based on: {user_input}",
+            expected_output="What this task should produce",
+            agent=self.primary_agent,
+            tools=[self.custom_tool]
         )
         
-        strategy_task = Task(
-            description="Create marketing strategy based on analysis",
-            expected_output="Actionable marketing recommendations",
-            agent=self.strategy_agent,
-            context=[research_task]
+        task2 = Task(
+            description="Second task description",
+            expected_output="What this task should produce",
+            agent=self.secondary_agent,
+            context=[task1]
         )
         
-        return [research_task, strategy_task]
+        return [task1, task2]
     
-    def analyze(self, user_input: str) -> Dict[str, Any]:
-        """Execute the full analysis workflow"""
+    def execute(self, user_input: str) -> Dict[str, Any]:
+        """Execute the crew's workflow"""
         tasks = self._create_tasks(user_input)
         self.crew.tasks = tasks
-        return self.crew.kickoff()
+        result = self.crew.kickoff()
+        return {"result": result}
 
-# ----- Flask Routes -----
-@app.route('/analyze', methods=['POST'])
-def analyze_content():
+# --------------------------
+# 3. FLASK ROUTES (NEW ADDITION)
+# --------------------------
+@app.route('/process', methods=['POST'])
+def process():
+    """Endpoint that executes the crew workflow"""
     try:
-        # Validate request
-        if not request.is_json:
-            return jsonify({"error": "Request must be JSON"}), 400
-            
         data = request.get_json()
-        user_input = data.get('query')
         
-        if not user_input:
-            return jsonify({"error": "Query parameter is required"}), 400
+        if not data or 'input' not in data:
+            return jsonify({"error": "Missing input parameter"}), 400
         
-        # Process with CrewAI
-        analyzer = ContentAnalysisCrew()
-        result = analyzer.analyze(user_input)
+        crew = MyCrew()
+        output = crew.execute(data['input'])
         
-        # Format response
         return jsonify({
             "status": "success",
-            "data": {
-                "analysis": result,
-                "metadata": {
-                    "model": "gemini-1.5-flash",
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
+            "data": output
         })
-        
+    
     except Exception as e:
         return jsonify({
             "status": "error",
-            "message": str(e),
-            "traceback": traceback.format_exc()
+            "message": str(e)
         }), 500
 
+# --------------------------
+# 4. MAIN EXECUTION
+# --------------------------
 if __name__ == '__main__':
+    # Run both the crew example and Flask app
+    print("Running crew example...")
+    crew = MyCrew()
+    output = crew.execute("Example user input")
+    print("Crew output:", output)
+    
+    print("\nStarting Flask server...")
     app.run(host='0.0.0.0', port=5000, debug=True)
